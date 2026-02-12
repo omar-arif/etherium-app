@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Sepolia Wallet (MetaMask provider)</title>
+    <style>
+      body { font-family: system-ui, Arial; margin: 24px; }
+      button { margin-right: 8px; }
+      table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+      th, td { border: 1px solid #ddd; padding: 6px; font-size: 14px; }
+      th { background: #f6f6f6; text-align: left; }
+      code { background: #f2f2f2; padding: 2px 4px; }
+      .muted { color: #666; margin-left: 8px; }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <script>
+      const { useEffect, useState } = React;
+      const h = React.createElement;
+
+      const SEPOLIA_HEX = "0xaa36a7"; // 11155111
+
+      function short(s) { return s ? (s.slice(0, 6) + "…" + s.slice(-4)) : "-"; }
+
+      function formatEtherFromHexWei(hexWei) {
+        // hex string (e.g. "0x1234") -> decimal ETH string (safe BigInt)
+        const wei = BigInt(hexWei);
+        const s = wei.toString().padStart(19, "0");
+        const intPart = s.slice(0, -18);
+        let frac = s.slice(-18).replace(/0+$/, "");
+        frac = frac.slice(0, 6); // keep it simple
+        return frac ? (intPart + "." + frac) : intPart;
+      }
+
+      function pickProvider() {
+        const eth = window.ethereum;
+        if (!eth) return null;
+        if (Array.isArray(eth.providers) && eth.providers.length) {
+          return eth.providers.find(p => p && p.isMetaMask) || eth.providers[0];
+        }
+        return eth;
+      }
+
+      function App() {
+        const [account, setAccount] = useState(null);
+        const [chainId, setChainId] = useState(null);
+        const [balance, setBalance] = useState("-");
+        const [txs, setTxs] = useState([]);
+        const [msg, setMsg] = useState("");
+        const [connecting, setConnecting] = useState(false);
+
+        async function refresh(addr) {
+          const provider = pickProvider();
+          if (!provider || !addr) return;
+
+          const cid = await provider.request({ method: "eth_chainId" });
+          setChainId(cid);
+
+          const balHex = await provider.request({
+            method: "eth_getBalance",
+            params: [addr, "latest"]
+          });
+          setBalance(formatEtherFromHexWei(balHex));
+
+          const t = await fetch("/api/txs?address=" + addr).then(r => r.json());
+          setTxs(t.txs || []);
+        }
+
+        async function ensureSepolia(provider) {
+          const cid = await provider.request({ method: "eth_chainId" });
+          if (cid === SEPOLIA_HEX) return true;
+
+          // Ask MetaMask to switch networks (user confirms in MetaMask). [web:143][web:144]
+          try {
+            await provider.request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: SEPOLIA_HEX }]
+            });
+            return true;
+          } catch (e) {
+            setMsg("Please switch MetaMask to Sepolia.");
+            return false;
+          }
+        }
+
+        async function connect() {
+          const provider = pickProvider();
+          if (!provider) return setMsg("MetaMask not detected.");
+          if (connecting) return;
+
+          setMsg("");
+          setConnecting(true);
+
+          try {
+            // Connect (MetaMask popup) [web:1]
+            const accounts = await provider.request({ method: "eth_requestAccounts" });
+            const a = accounts && accounts[0] ? accounts[0] : null;
+            if (!a) { setMsg("No account returned."); return; }
+
+            setAccount(a);
+
+            await ensureSepolia(provider);
+            await refresh(a);
+          } catch (e) {
+            setMsg(e?.message || "Connection failed.");
+          } finally {
+            setConnecting(false);
+          }
+        }
+
+        function disconnect() {
+          setAccount(null);
+          setChainId(null);
+          setBalance("-");
+          setTxs([]);
+          setMsg("");
+        }
+
+        useEffect(() => {
+          const provider = pickProvider();
+          if (!provider || !provider.on) return;
+
+          const onAccountsChanged = (accounts) => {
+            const a = accounts && accounts[0] ? accounts[0] : null;
+            if (!a) return disconnect();
+            setAccount(a);
+            refresh(a);
+          };
+
+          const onChainChanged = (cid) => {
+            setChainId(cid);
+            if (account) refresh(account);
+          };
+
+          provider.on("accountsChanged", onAccountsChanged);
+          provider.on("chainChanged", onChainChanged);
+
+          return () => {
+            provider.removeListener && provider.removeListener("accountsChanged", onAccountsChanged);
+            provider.removeListener && provider.removeListener("chainChanged", onChainChanged);
+          };
+        }, [account]);
+
+        return h("div", null,
+          h("h1", null, "Sepolia wallet (MetaMask does the work)"),
+
+          h("div", null,
+            h("button", { onClick: connect, disabled: connecting || !!account },
+              connecting ? "Connecting..." : "Connect"
+            ),
+            h("button", { onClick: disconnect, disabled: !account }, "Disconnect"),
+            h("span", { className: "muted" }, msg)
+          ),
+
+          h("p", null, "Account: ", h("code", null, account || "-")),
+          h("p", null, "ChainId: ", h("code", null, chainId || "-")),
+          h("p", null, "Balance (via MetaMask): ", h("code", null, balance), " ETH"),
+
+          h("h2", null, "Last 10 txs (Etherscan via backend)"),
+          h("table", null,
+            h("thead", null,
+              h("tr", null,
+                h("th", null, "Date"),
+                h("th", null, "Status"),
+                h("th", null, "From"),
+                h("th", null, "To"),
+                h("th", null, "Value (ETH)"),
+                h("th", null, "Hash")
+              )
+            ),
+            h("tbody", null,
+              (txs || []).map(tx =>
+                h("tr", { key: tx.hash },
+                  h("td", null, tx.dateIso ? new Date(tx.dateIso).toLocaleString() : "-"),
+                  h("td", null, tx.status || "-"),
+                  h("td", null, h("code", { title: tx.from }, short(tx.from))),
+                  h("td", null, h("code", { title: tx.to }, short(tx.to))),
+                  h("td", null, tx.valueEth ?? "-"),
+                  h("td", null, h("code", { title: tx.hash }, short(tx.hash)))
+                )
+              )
+            )
+          )
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+    </script>
+  </body>
+</html>

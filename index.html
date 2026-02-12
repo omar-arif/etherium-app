@@ -2,15 +2,70 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Sepolia Wallet (MetaMask provider)</title>
+    <title>Sepolia Wallet</title>
     <style>
-      body { font-family: system-ui, Arial; margin: 24px; }
-      button { margin-right: 8px; }
-      table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-      th, td { border: 1px solid #ddd; padding: 6px; font-size: 14px; }
-      th { background: #f6f6f6; text-align: left; }
-      code { background: #f2f2f2; padding: 2px 4px; }
-      .muted { color: #666; margin-left: 8px; }
+      :root{
+        --bg:#ffffff; --panel:#ffffff; --text:#111827; --muted:#6b7280; --border:#e5e7eb;
+        --blue:#1e88e5; --blue2:#1565c0;
+        --success:#16a34a; --danger:#dc2626;
+        --rowHover: rgba(30,136,229,.08);
+        --rowSelected: rgba(30,136,229,.16);
+        --badgeBg: rgba(17,24,39,.06);
+      }
+      body.dark{
+        --bg:#0b1220; --panel:#0f172a; --text:#e5e7eb; --muted:#9ca3af; --border:#22304a;
+        --rowHover: rgba(30,136,229,.15);
+        --rowSelected: rgba(30,136,229,.25);
+        --badgeBg: rgba(229,231,235,.08);
+      }
+
+      body{ margin:0; background:var(--bg); color:var(--text); font-family:system-ui, Arial; }
+      .wrap{ padding:20px; max-width:1200px; margin:0 auto; }
+      .topbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+      .title{ margin:0; font-size:20px; }
+      .btn{
+        background:var(--blue); color:white; border:none; border-radius:10px;
+        padding:10px 12px; cursor:pointer; font-weight:600;
+      }
+      .btn:hover{ background:var(--blue2); }
+      .btn:disabled{ opacity:.6; cursor:not-allowed; }
+
+      .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:var(--badgeBg); border:1px solid var(--border); font-size:12px; }
+      .pill.ok{ color:var(--success); border-color:rgba(22,163,74,.4); }
+      .pill.bad{ color:var(--danger); border-color:rgba(220,38,38,.4); }
+
+      .muted{ color:var(--muted); }
+      code{ background:rgba(125,125,125,.12); padding:2px 6px; border-radius:6px; }
+
+      .grid{
+        display:flex; gap:16px; margin-top:14px;
+      }
+      .left, .right{
+        background:var(--panel); border:1px solid var(--border); border-radius:14px;
+        padding:14px;
+      }
+      .left{ flex: 1.4; min-width: 520px; }
+      .right{ flex: 1; min-width: 320px; position:sticky; top:12px; height: fit-content; }
+
+      table{ width:100%; border-collapse:collapse; margin-top:10px; }
+      th,td{ border-bottom:1px solid var(--border); padding:8px; font-size:13px; vertical-align:top; }
+      th{ text-align:left; color:var(--muted); font-weight:700; }
+      tr.clickable{ cursor:pointer; }
+      tr.clickable:hover{ background:var(--rowHover); }
+      tr.selected{ background:var(--rowSelected); }
+
+      a{ color:var(--blue); text-decoration:none; }
+      a:hover{ text-decoration:underline; }
+
+      .kv{ display:grid; grid-template-columns: 140px 1fr; gap:8px 10px; margin-top:10px; }
+      .k{ color:var(--muted); font-size:13px; }
+      .v{ font-size:13px; overflow-wrap:anywhere; }
+
+      @media (max-width: 980px){
+        .grid{ flex-direction:column; }
+        .left{ min-width: 0; }
+        .right{ position:static; min-width:0; }
+      }
     </style>
   </head>
 
@@ -21,24 +76,12 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 
     <script>
-      const { useEffect, useState } = React;
+      const { useEffect, useMemo, useState } = React;
       const h = React.createElement;
 
-      const SEPOLIA_HEX = "0xaa36a7"; // 11155111
+      function short(s){ return s ? (s.slice(0,6) + "…" + s.slice(-4)) : "-"; }
 
-      function short(s) { return s ? (s.slice(0, 6) + "…" + s.slice(-4)) : "-"; }
-
-      function formatEtherFromHexWei(hexWei) {
-        // hex string (e.g. "0x1234") -> decimal ETH string (safe BigInt)
-        const wei = BigInt(hexWei);
-        const s = wei.toString().padStart(19, "0");
-        const intPart = s.slice(0, -18);
-        let frac = s.slice(-18).replace(/0+$/, "");
-        frac = frac.slice(0, 6); // keep it simple
-        return frac ? (intPart + "." + frac) : intPart;
-      }
-
-      function pickProvider() {
+      function pickProvider(){
         const eth = window.ethereum;
         if (!eth) return null;
         if (Array.isArray(eth.providers) && eth.providers.length) {
@@ -47,88 +90,98 @@
         return eth;
       }
 
-      function App() {
+      function formatEtherFromHexWei(hexWei){
+        try{
+          const wei = BigInt(hexWei);
+          const s = wei.toString().padStart(19, "0");
+          const intPart = s.slice(0, -18);
+          let frac = s.slice(-18).replace(/0+$/, "").slice(0, 6);
+          return frac ? (intPart + "." + frac) : intPart;
+        } catch { return "-"; }
+      }
+
+      function App(){
+        const [dark, setDark] = useState(false);
         const [account, setAccount] = useState(null);
         const [chainId, setChainId] = useState(null);
         const [balance, setBalance] = useState("-");
         const [txs, setTxs] = useState([]);
+        const [selectedHash, setSelectedHash] = useState(null);
         const [msg, setMsg] = useState("");
-        const [connecting, setConnecting] = useState(false);
+        const [busy, setBusy] = useState(false);
 
-        async function refresh(addr) {
-          const provider = pickProvider();
-          if (!provider || !addr) return;
+        const selectedTx = useMemo(
+          () => (txs || []).find(t => t.hash === selectedHash) || null,
+          [txs, selectedHash]
+        );
 
-          const cid = await provider.request({ method: "eth_chainId" });
+        useEffect(() => {
+          const saved = localStorage.getItem("theme");
+          const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const nextDark = saved ? (saved === "dark") : prefersDark;
+          setDark(nextDark);
+        }, []);
+
+        useEffect(() => {
+          document.body.classList.toggle("dark", !!dark);
+          localStorage.setItem("theme", dark ? "dark" : "light");
+        }, [dark]);
+
+        async function refresh(addr){
+          const p = pickProvider();
+          if (!p || !addr) return;
+
+          const cid = await p.request({ method:"eth_chainId" });
           setChainId(cid);
 
-          const balHex = await provider.request({
-            method: "eth_getBalance",
-            params: [addr, "latest"]
-          });
+          const balHex = await p.request({ method:"eth_getBalance", params:[addr, "latest"] });
           setBalance(formatEtherFromHexWei(balHex));
 
           const t = await fetch("/api/txs?address=" + addr).then(r => r.json());
-          setTxs(t.txs || []);
+          const list = t.txs || [];
+          setTxs(list);
+          if (!selectedHash && list[0]?.hash) setSelectedHash(list[0].hash);
         }
 
-        async function ensureSepolia(provider) {
-          const cid = await provider.request({ method: "eth_chainId" });
-          if (cid === SEPOLIA_HEX) return true;
+        async function connectOrDisconnect(){
+          const p = pickProvider();
 
-          // Ask MetaMask to switch networks (user confirms in MetaMask). [web:143][web:144]
-          try {
-            await provider.request({
-              method: "wallet_switchEthereumChain",
-              params: [{ chainId: SEPOLIA_HEX }]
-            });
-            return true;
-          } catch (e) {
-            setMsg("Please switch MetaMask to Sepolia.");
-            return false;
+          // disconnect (local)
+          if (account){
+            setAccount(null); setChainId(null); setBalance("-"); setTxs([]); setSelectedHash(null); setMsg("");
+            return;
           }
-        }
 
-        async function connect() {
-          const provider = pickProvider();
-          if (!provider) return setMsg("MetaMask not detected.");
-          if (connecting) return;
+          if (!p) { setMsg("MetaMask not detected."); return; }
+          if (busy) return;
 
+          setBusy(true);
           setMsg("");
-          setConnecting(true);
 
-          try {
-            // Connect (MetaMask popup) [web:1]
-            const accounts = await provider.request({ method: "eth_requestAccounts" });
+          try{
+            const accounts = await p.request({ method:"eth_requestAccounts" }); // [web:1]
             const a = accounts && accounts[0] ? accounts[0] : null;
-            if (!a) { setMsg("No account returned."); return; }
+            if (!a) { setMsg("No account returned."); setBusy(false); return; }
 
             setAccount(a);
-
-            await ensureSepolia(provider);
             await refresh(a);
-          } catch (e) {
+          } catch(e){
             setMsg(e?.message || "Connection failed.");
           } finally {
-            setConnecting(false);
+            setBusy(false);
           }
-        }
-
-        function disconnect() {
-          setAccount(null);
-          setChainId(null);
-          setBalance("-");
-          setTxs([]);
-          setMsg("");
         }
 
         useEffect(() => {
-          const provider = pickProvider();
-          if (!provider || !provider.on) return;
+          const p = pickProvider();
+          if (!p || !p.on) return;
 
           const onAccountsChanged = (accounts) => {
             const a = accounts && accounts[0] ? accounts[0] : null;
-            if (!a) return disconnect();
+            if (!a) {
+              setAccount(null); setChainId(null); setBalance("-"); setTxs([]); setSelectedHash(null);
+              return;
+            }
             setAccount(a);
             refresh(a);
           };
@@ -138,54 +191,144 @@
             if (account) refresh(account);
           };
 
-          provider.on("accountsChanged", onAccountsChanged);
-          provider.on("chainChanged", onChainChanged);
-
+          p.on("accountsChanged", onAccountsChanged);
+          p.on("chainChanged", onChainChanged);
           return () => {
-            provider.removeListener && provider.removeListener("accountsChanged", onAccountsChanged);
-            provider.removeListener && provider.removeListener("chainChanged", onChainChanged);
+            p.removeListener && p.removeListener("accountsChanged", onAccountsChanged);
+            p.removeListener && p.removeListener("chainChanged", onChainChanged);
           };
-        }, [account]);
+        }, [account, selectedHash]);
 
-        return h("div", null,
-          h("h1", null, "Sepolia wallet (MetaMask does the work)"),
+        function StatusPill({status}){
+          const ok = status === "success";
+          return h("span", { className: "pill " + (ok ? "ok" : "bad") }, status || "-");
+        }
 
-          h("div", null,
-            h("button", { onClick: connect, disabled: connecting || !!account },
-              connecting ? "Connecting..." : "Connect"
+        function TxDetails({tx}){
+          if (!tx) {
+            return h("div", null,
+              h("h2", { style:{margin:"0 0 8px 0"} }, "Transaction"),
+              h("div", { className:"muted" }, "Click a transaction on the left to see details.")
+            );
+          }
+
+          const isOk = tx.status === "success";
+          const statusText = tx.status || ((tx.isError === "1" || tx.txreceipt_status === "0") ? "failed" : "success");
+
+          const fields = [
+            ["Status", null],
+            ["Date", tx.dateIso ? new Date(tx.dateIso).toLocaleString() : "-"],
+            ["Hash", tx.hash],
+            ["From", tx.from],
+            ["To", tx.to],
+            ["Value (ETH)", tx.valueEth],
+            ["Value (wei)", tx.valueWei || tx.value],
+            ["Block", tx.blockNumber],
+            ["Nonce", tx.nonce],
+            ["Gas", tx.gas],
+            ["Gas price", tx.gasPrice],
+            ["Gas used", tx.gasUsed],
+            ["Cumulative gas used", tx.cumulativeGasUsed],
+            ["Confirmations", tx.confirmations],
+            ["Contract address", tx.contractAddress],
+            ["MethodId", tx.methodId],
+            ["Function name", tx.functionName],
+            ["Input", tx.input],
+          ];
+
+          return h("div", null,
+            h("div", { style:{display:"flex", alignItems:"center", justifyContent:"space-between", gap:"10px"} },
+              h("h2", { style:{margin:"0"} }, "Transaction"),
+              h("a", { href: tx.explorerUrl, target:"_blank", rel:"noreferrer" }, "View on Etherscan")
             ),
-            h("button", { onClick: disconnect, disabled: !account }, "Disconnect"),
-            h("span", { className: "muted" }, msg)
+            h("div", { style:{marginTop:"8px"} }, h(StatusPill, { status: statusText })),
+            h("div", { className:"kv" },
+              ...fields.map(([k, v]) => {
+                if (k === "Status") {
+                  return [
+                    h("div", { className:"k", key:k+"k" }, "Status"),
+                    h("div", { className:"v", key:k+"v" },
+                      h("span", { style:{color: isOk ? "var(--success)" : "var(--danger)", fontWeight:800} }, statusText)
+                    ),
+                  ];
+                }
+                return [
+                  h("div", { className:"k", key:k+"k" }, k),
+                  h("div", { className:"v", key:k+"v" }, v ? h("code", null, String(v)) : "-"),
+                ];
+              }).flat()
+            )
+          );
+        }
+
+        return h("div", { className:"wrap" },
+          h("div", { className:"topbar" },
+            h("h1", { className:"title" }, "Sepolia wallet"),
+            h("div", null,
+              h("button", {
+                className:"btn",
+                onClick: () => setDark(d => !d),
+                style:{ marginRight:"8px" }
+              }, dark ? "Light mode" : "Dark mode"),
+              h("button", {
+                className:"btn",
+                onClick: connectOrDisconnect,
+                disabled: busy
+              }, busy ? "Working..." : (account ? "Disconnect" : "Connect"))
+            )
           ),
 
-          h("p", null, "Account: ", h("code", null, account || "-")),
-          h("p", null, "ChainId: ", h("code", null, chainId || "-")),
-          h("p", null, "Balance (via MetaMask): ", h("code", null, balance), " ETH"),
+          h("div", { className:"muted", style:{ marginTop:"8px" } }, msg),
+          h("div", { style:{ marginTop:"10px" } },
+            h("span", null, "Account: ", h("code", null, account || "-"), " "),
+            h("span", null, "ChainId: ", h("code", null, chainId || "-"), " "),
+            h("span", null, "Balance: ", h("code", null, balance), " ETH")
+          ),
 
-          h("h2", null, "Last 10 txs (Etherscan via backend)"),
-          h("table", null,
-            h("thead", null,
-              h("tr", null,
-                h("th", null, "Date"),
-                h("th", null, "Status"),
-                h("th", null, "From"),
-                h("th", null, "To"),
-                h("th", null, "Value (ETH)"),
-                h("th", null, "Hash")
-              )
-            ),
-            h("tbody", null,
-              (txs || []).map(tx =>
-                h("tr", { key: tx.hash },
-                  h("td", null, tx.dateIso ? new Date(tx.dateIso).toLocaleString() : "-"),
-                  h("td", null, tx.status || "-"),
-                  h("td", null, h("code", { title: tx.from }, short(tx.from))),
-                  h("td", null, h("code", { title: tx.to }, short(tx.to))),
-                  h("td", null, tx.valueEth ?? "-"),
-                  h("td", null, h("code", { title: tx.hash }, short(tx.hash)))
+          h("div", { className:"grid" },
+            h("div", { className:"left" },
+              h("div", { style:{display:"flex", alignItems:"center", justifyContent:"space-between"} },
+                h("h2", { style:{margin:"0"} }, "Last 10 transactions"),
+                account ? h("button", { className:"btn", onClick: () => refresh(account) }, "Refresh") : null
+              ),
+
+              h("table", null,
+                h("thead", null,
+                  h("tr", null,
+                    h("th", null, "Date"),
+                    h("th", null, "Status"),
+                    h("th", null, "From"),
+                    h("th", null, "To"),
+                    h("th", null, "Value"),
+                    h("th", null, "Hash")
+                  )
+                ),
+                h("tbody", null,
+                  (txs || []).map(tx => {
+                    const selected = tx.hash === selectedHash;
+                    return h("tr", {
+                        key: tx.hash,
+                        className: "clickable" + (selected ? " selected" : ""),
+                        onClick: () => setSelectedHash(tx.hash),
+                        title: "Click for details"
+                      },
+                      h("td", null, tx.dateIso ? new Date(tx.dateIso).toLocaleString() : "-"),
+                      h("td", null, h(StatusPill, { status: tx.status })),
+                      h("td", null, h("code", { title: tx.from }, short(tx.from))),
+                      h("td", null, h("code", { title: tx.to }, short(tx.to))),
+                      h("td", null, tx.valueEth ?? "-"),
+                      h("td", null,
+                        h("a", { href: tx.explorerUrl, target:"_blank", rel:"noreferrer", title: tx.hash },
+                          h("code", null, short(tx.hash))
+                        )
+                      )
+                    );
+                  })
                 )
               )
-            )
+            ),
+
+            h("div", { className:"right" }, h(TxDetails, { tx: selectedTx }))
           )
         );
       }

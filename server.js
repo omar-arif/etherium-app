@@ -7,6 +7,7 @@ const PORT = Number(process.env.PORT || 5173);
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
 
 const SEPOLIA_CHAIN_ID = 11155111;
+const ETHERSCAN_TX_BASE = "https://sepolia.etherscan.io/tx/"; // [web:169]
 
 function send(res, status, body, type = "text/plain; charset=utf-8") {
   res.writeHead(status, { "Content-Type": type });
@@ -16,7 +17,7 @@ function send(res, status, body, type = "text/plain; charset=utf-8") {
 function json(res, status, data) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*"
+    "Access-Control-Allow-Origin": "*",
   });
   res.end(JSON.stringify(data));
 }
@@ -28,13 +29,12 @@ function checksumAddress(a) {
 http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
-  // Frontend
   if (req.method === "GET" && url.pathname === "/") {
     const html = await readFile(new URL("./index.html", import.meta.url));
     return send(res, 200, html, "text/html; charset=utf-8");
   }
 
-  // Last 10 transactions (Sepolia) via Etherscan txlist. [page:0]
+  // GET /api/txs?address=0x...
   if (req.method === "GET" && url.pathname === "/api/txs") {
     if (!ETHERSCAN_API_KEY) return json(res, 500, { error: "Missing ETHERSCAN_API_KEY" });
 
@@ -44,7 +44,7 @@ http.createServer(async (req, res) => {
     const api = new URL("https://api.etherscan.io/v2/api");
     api.searchParams.set("chainid", String(SEPOLIA_CHAIN_ID));
     api.searchParams.set("module", "account");
-    api.searchParams.set("action", "txlist");
+    api.searchParams.set("action", "txlist"); // Etherscan txlist [page:0]
     api.searchParams.set("address", address);
     api.searchParams.set("page", "1");
     api.searchParams.set("offset", "10");
@@ -62,13 +62,23 @@ http.createServer(async (req, res) => {
       const txs = (data.result || []).map((t) => {
         const ts = Number(t.timeStamp);
         const status = (t.isError === "1" || t.txreceipt_status === "0") ? "failed" : "success";
+
+        const valueWei = t.value || "0";
+        let valueEth = "0";
+        try { valueEth = ethers.formatEther(BigInt(valueWei)); } catch {}
+
         return {
-          hash: t.hash,
-          dateIso: new Date(ts * 1000).toISOString(),
+          // keep ALL original fields from Etherscan (strings)
+          ...t, // includes from/to/hash/value/gas/gasPrice/input/confirmations/etc. [page:0]
+
+          // add a few computed fields for UI
           status,
-          from: t.from,
-          to: t.to,
-          valueEth: ethers.formatEther(BigInt(t.value || "0"))
+          timestamp: ts,
+          dateIso: Number.isFinite(ts) ? new Date(ts * 1000).toISOString() : null,
+          valueWei,
+          valueEth,
+
+          explorerUrl: ETHERSCAN_TX_BASE + t.hash, // [web:169]
         };
       });
 
